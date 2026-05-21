@@ -1,0 +1,577 @@
+# =============================================================================
+# IntuneGraphPolicies.psm1
+# Canonical SettingObject, raw extraction, category resolution, resolve
+# =============================================================================
+# ─────────────────────────────────────────────────────────────────────────────
+# CANONICAL SETTING STRUCTURE
+# From the moment of expand — one structure throughout the entire pipeline
+#
+# SettingObject = @{
+#     PolicyId           = <string>
+#     PolicyName         = <string>
+#     DefinitionId       = <string>
+#     ParentDefinitionId = <string|null>   # only set when child has no displayName
+#     RawValue           = <string>
+#     Source             = "Source" | "Target"
+# }
+# ─────────────────────────────────────────────────────────────────────────────
+function Get-RawSettings {
+    param(
+        [Parameter(Mandatory)]
+        $Instance,
+        [string]$ParentDefinitionId = $null
+    )
+    # Pure raw extraction — no definition lookup, no path building, no value resolution.
+    # ParentDefinitionId is passed so Resolve-DiffForExport can use the parent displayName
+    # when a child has no displayName of its own (e.g. _l_empty pattern).
+    if (-not $Instance) { return }
+
+    $defId = $Instance.settingDefinitionId
+
+    if (-not $defId) { return }
+
+    $results = [System.Collections.Generic.List[PSCustomObject]]::new()
+
+    $type    = $Instance.'@odata.type'
+    switch -Wildcard ($type) {
+        '*ChoiceSettingInstance' {
+            if ($null -ne $Instance.choiceSettingValue.value) {
+                $results.Add([PSCustomObject]@{
+                    DefinitionId       = $defId
+                    ParentDefinitionId = $ParentDefinitionId
+                    RawValue           = $Instance.choiceSettingValue.value
+                })
+            }
+            foreach ($child in $Instance.choiceSettingValue.children) {
+                foreach ($r in (Get-RawSettings -Instance $child -ParentDefinitionId $defId)) {
+                    $results.Add($r)
+                }
+            }
+        }
+        '*SimpleSettingInstance' {
+            if ($null -ne $Instance.simpleSettingValue.value) {
+                $results.Add([PSCustomObject]@{
+                    DefinitionId       = $defId
+                    ParentDefinitionId = $ParentDefinitionId
+                    RawValue           = "$($Instance.simpleSettingValue.value)"
+                })
+            }
+        }
+        '*GroupSettingInstance' {
+            foreach ($child in $Instance.groupSettingValue.children) {
+                foreach ($r in (Get-RawSettings -Instance $child -ParentDefinitionId $defId)) {
+                    $results.Add($r)
+                }
+            }
+        }
+        '*GroupSettingCollectionInstance' {
+            foreach ($group in $Instance.groupSettingCollectionValue) {
+                # Detect key/value pattern
+                # Example: hardeneduncpaths_key + hardeneduncpaths_value
+                # The key is appended to the DefinitionId so that each
+                # key/value combination gets a unique row in the output.
+                # Setting path becomes: ...Hardened UNC Paths > \\*\NETLOGON
+                # RawValue becomes:     RequireMutualAuthentication=1,RequireIntegrity=1
+                $keyChild   = $group.children | Where-Object { $_.settingDefinitionId -match '_key$'   } | Select-Object -First 1
+                $valueChild = $group.children | Where-Object { $_.settingDefinitionId -match '_value$' } | Select-Object -First 1
+                if ($keyChild -and $valueChild) {
+                    $keyVal = if ($keyChild.simpleSettingValue)     { "$($keyChild.simpleSettingValue.value)"  }
+                              elseif ($keyChild.choiceSettingValue) { $keyChild.choiceSettingValue.value }
+                              else { $null }
+                    $valVal = if ($valueChild.simpleSettingValue)     { "$($valueChild.simpleSettingValue.value)"  }
+                              elseif ($valueChild.choiceSettingValue) { $valueChild.choiceSettingValue.value }
+                              else { $null }
+                    if ($keyVal -and $valVal) {
+                        # Extend DefinitionId with the key — unique row per key
+                        # Format: "realDefinitionId||keyVal"
+                        $results.Add([PSCustomObject]@{
+                            DefinitionId       = "$defId||$keyVal"
+                            ParentDefinitionId = $defId
+                            RawValue           = $valVal
+                        })
+                    }
+                    # Process remaining children (non key/value) normally
+                    foreach ($child in $group.children) {
+                        if ($child.settingDefinitionId -match '_key$' -or
+                            $child.settingDefinitionId -match '_value$') { continue }
+                        foreach ($r in (Get-RawSettings -Instance $child -ParentDefinitionId $defId)) {
+                            $results.Add($r)
+                        }
+                    }
+                } else {
+                    # No key/value pattern — process normally
+                    foreach ($child in $group.children) {
+                        foreach ($r in (Get-RawSettings -Instance $child -ParentDefinitionId $defId)) {
+                            $results.Add($r)
+                        }
+                    }
+                }
+            }
+        }
+        '*SimpleSettingCollectionInstance' {
+            foreach ($item in $Instance.simpleSettingCollectionValue) {
+                $results.Add([PSCustomObject]@{
+                    DefinitionId       = $defId
+                    ParentDefinitionId = $ParentDefinitionId
+                    RawValue           = "$($item.value)"
+                })
+            }
+        }
+    }
+    return $results
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CANONICAL FLATTEN → SettingObjects
+# ─────────────────────────────────────────────────────────────────────────────
+
+function ConvertTo-SettingObjects {
+    param(
+        [Parameter(Mandatory)]$Policy,
+        [Parameter(Mandatory)]
+        [ValidateSet("Source","Target")]
+        [string]$Source
+    )
+    foreach ($s in $Policy.Settings) {
+        if (-not $s.settingInstance) { continue }
+        $rawSettings = Get-RawSettings -Instance $s.settingInstance
+        foreach ($r in $rawSettings) {
+            [PSCustomObject]@{
+                PolicyId           = $Policy.PolicyId
+                PolicyName         = $Policy.Name
+                DefinitionId       = $r.DefinitionId
+                ParentDefinitionId = $r.ParentDefinitionId
+                RawValue           = $r.RawValue
+                Source             = $Source
+            }
+        }
+    }
+}
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CATEGORY RESOLUTION
+# ─────────────────────────────────────────────────────────────────────────────
+function Resolve-Category {
+    param(
+        [string]$CategoryId,
+        $Connection = $null
+    )
+    if (-not $CategoryId -or $CategoryId -eq "00000000-0000-0000-0000-000000000000") {
+        return $null
+    }
+    if ($global:CategoryById.ContainsKey($CategoryId)) {
+        return $global:CategoryById[$CategoryId]
+    }
+    if (-not $Connection) {
+        $Connection = $global:GraphConnection
+    }
+    # Skip entirely if no categories file loaded — API is only a fallback for unknown entries
+    if (-not $global:bHasCategories) {
+        return $null
+    }
+    if ($Connection) {
+        try {
+            $uri      = "https://graph.microsoft.com/beta/deviceManagement/configurationCategories/$CategoryId"
+            $category = Invoke-IntuneGraphRequest -Connection $Connection -Uri $uri -ErrorAction Stop
+            if ($category) {
+                if (-not $global:CategoryById.ContainsKey($CategoryId)) {
+                    $global:CategoryById[$CategoryId] = $category
+                    # Mark cache as dirty — file will be written once at end of run
+                    $global:CategoryCacheDirty = $true
+                }
+                Write-Log "Categories" "Fetched from API: $($category.displayName)." "INFO"
+                return $global:CategoryById[$CategoryId]
+            }
+        }
+        catch {
+            Write-Log "Categories" "API call failed for category '$CategoryId'. $_" "WARN"
+        }
+    }
+    $placeholder = [PSCustomObject]@{
+        id               = $CategoryId
+        displayName      = "[Unresolved Category]"
+        parentCategoryId = $null
+    }
+    if (-not $global:CategoryById.ContainsKey($CategoryId)) {
+        $global:CategoryById[$CategoryId] = $placeholder
+    }
+    return $global:CategoryById[$CategoryId]
+}
+
+
+function Get-CategoryPath {
+    param(
+        [string]$CategoryId,
+        $Connection = $null
+    )
+    if (-not $CategoryId -or $CategoryId -eq "00000000-0000-0000-0000-000000000000") {
+        return $null
+    }
+    # If no categories file was loaded, skip all lookups and API calls entirely
+    if (-not $global:bHasCategories) {
+        return $null
+    }
+    if (-not $Connection) {
+        $Connection = $global:GraphConnection
+    }
+    if (-not $global:CategoryPathCache) { $global:CategoryPathCache = @{} }
+    if ($global:CategoryPathCache.ContainsKey($CategoryId)) {
+        return $global:CategoryPathCache[$CategoryId]
+    }
+    $parts     = [System.Collections.Generic.List[string]]::new()
+    $currentId = $CategoryId
+    $visited   = [System.Collections.Generic.HashSet[string]]::new()
+    while ($currentId -and $currentId -ne "00000000-0000-0000-0000-000000000000") {
+        if (-not $visited.Add($currentId)) {
+            Write-Log "Categories" "Circular reference detected at '$currentId'." "WARN"
+            break
+        }
+        if ($global:CategoryPathCache.ContainsKey($currentId)) {
+            $cached = $global:CategoryPathCache[$currentId]
+            if ($cached) {
+                $parts.Insert(0, $cached)
+            }
+            break
+        }
+        $cat = Resolve-Category -CategoryId $currentId -Connection $Connection
+        if (-not $cat) { break }
+        if ($cat.displayName) { $parts.Insert(0, $cat.displayName) }
+        $currentId = if ($cat.parentCategoryId -and
+                        $cat.parentCategoryId -ne "00000000-0000-0000-0000-000000000000") {
+            $cat.parentCategoryId
+        } else { $null }
+    }
+    $fullPath = if ($parts.Count -gt 0) { $parts -join " > " } else { $null }
+    # Only cache the requested CategoryId — no sub-caching of intermediate IDs
+    $global:CategoryPathCache[$CategoryId] = $fullPath
+    return $fullPath
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VALUE RESOLUTION
+# ─────────────────────────────────────────────────────────────────────────────
+function Resolve-RawValue {
+    param(
+        [string]$DefinitionId,
+        [string]$RawValue
+    )
+    # Key/value DefinitionIds contain '||' — they do not need to be resolved via options
+    if ($DefinitionId -match '\|\|') { return $RawValue }
+
+    # Collection values are joined with '|' by Merge-CollectionSettings.
+    # Resolve each part individually and rejoin.
+    if ($RawValue -match '\|') {
+        $parts = $RawValue -split '\|'
+        $resolved = $parts | ForEach-Object {
+            $key = $DefinitionId.Trim().ToLowerInvariant()
+            $def = $global:SettingDefinitionLookup[$key]
+            if ($def -and $def.options) {
+                $match = $def.options | Where-Object { $_.itemId -eq $_ } | Select-Object -First 1
+                if ($match) { $match.displayName } else { $_ }
+            } else { $_ }
+        }
+        return $resolved -join " | "
+    }
+
+    $key = $DefinitionId.Trim().ToLowerInvariant()
+    $def = $global:SettingDefinitionLookup[$key]
+    if (-not $def) { return $RawValue }
+    if ($def.options) {
+        $match = $def.options | Where-Object { $_.itemId -eq $RawValue } | Select-Object -First 1
+        if ($match) { return $match.displayName }
+    }
+    return $RawValue
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPER: build setting path from a DefinitionId
+# ─────────────────────────────────────────────────────────────────────────────
+
+function Get-SettingPath {
+    param(
+        [string]$DefinitionId,
+        $Connection = $null
+    )
+    # Key/value DefinitionIds use the format "realDefinitionId||keyVal"
+    # The key is appended as an extra path segment at the end
+    $keySegment = $null
+    $lookupId   = $DefinitionId
+    if ($DefinitionId -match '^(.+)\|\|(.+)$') {
+        $lookupId   = $Matches[1]
+        $keySegment = $Matches[2]
+    }
+
+    $key = $lookupId.Trim().ToLowerInvariant()
+    $def = $global:SettingDefinitionLookup[$key]
+    $settingName = if ($def -and $def.displayName -and $def.displayName.Trim() -ne "") {
+        $def.displayName.Trim()
+    } else {
+        $null
+    }
+    $pathParts = [System.Collections.Generic.List[string]]::new()
+    if ($def -and $def.categoryId -and $global:SettingDefinitionLookup.Count -gt 0) {
+        $categoryPath = Get-CategoryPath -CategoryId $def.categoryId -Connection $Connection
+        if ($categoryPath) {
+            foreach ($part in ($categoryPath -split " > ")) {
+                $trimmed = $part.Trim()
+                if ($trimmed) { $pathParts.Add($trimmed) }
+            }
+        }
+    }
+    # Root group intermediate layer — only when child of another setting
+    if ($def -and $def.rootDefinitionId) {
+        $rootKey = $def.rootDefinitionId.Trim().ToLowerInvariant()
+        if ($rootKey -ne $key) {
+            $rootDef = $global:SettingDefinitionLookup[$rootKey]
+            if ($rootDef -and $rootDef.displayName -and $rootDef.displayName.Trim() -ne "") {
+                $rootName = $rootDef.displayName.Trim()
+                if ($pathParts.Count -eq 0 -or $pathParts[$pathParts.Count - 1] -ne $rootName) {
+                    $pathParts.Add($rootName)
+                }
+            }
+        }
+    }
+    if ($settingName -and ($pathParts.Count -eq 0 -or $pathParts[$pathParts.Count - 1] -ne $settingName)) {
+        $pathParts.Add($settingName)
+    }
+    # Append key segment as the last path part
+    if ($keySegment -and ($pathParts.Count -eq 0 -or $pathParts[$pathParts.Count - 1] -ne $keySegment)) {
+        $pathParts.Add($keySegment)
+    }
+
+    return [PSCustomObject]@{
+        PathParts   = $pathParts
+        SettingName = if ($keySegment) { $keySegment } else { $settingName }
+        Def         = $def
+    }
+    
+}
+# ─────────────────────────────────────────────────────────────────────────────
+# DIFF RESOLVE FOR EXPORT
+# ─────────────────────────────────────────────────────────────────────────────
+function Resolve-DiffForExport {
+    param(
+        [Parameter(Mandatory)]
+        [array]$Diff,
+        $Connection = $null
+    )
+    foreach ($d in $Diff) {
+        $resolved = Get-SettingPath -DefinitionId $d.DefinitionId -Connection $Connection
+        # No displayName — try to use parent
+        if (-not $resolved.SettingName) {
+            if ($d.ParentDefinitionId) {
+                $parentResolved = Get-SettingPath -DefinitionId $d.ParentDefinitionId -Connection $Connection
+                if ($parentResolved.SettingName) {
+                    $fullSetting = $parentResolved.PathParts -join " > "
+                } else {
+                    $fullSetting = $d.DefinitionId
+                }
+            } else {
+                $fullSetting = $d.DefinitionId
+            }
+            $resolvedSource = if ($d.SourceValue) {
+                Resolve-RawValue -DefinitionId $d.DefinitionId -RawValue $d.SourceValue
+            } else { $null }
+            $resolvedTarget = if ($d.TargetValue) {
+                Resolve-RawValue -DefinitionId $d.DefinitionId -RawValue $d.TargetValue
+            } else { $null }
+            [PSCustomObject]@{
+                DefinitionId     = $d.DefinitionId
+                Setting          = $fullSetting
+                Status           = $d.Status
+                Issue            = $d.Issue
+                SourcePolicyName = $d.SourcePolicyName
+                TargetPolicyName = $d.TargetPolicyName
+                SourceValue      = $resolvedSource
+                TargetValue      = $resolvedTarget
+            }
+            continue
+        }
+        $fullSetting = if ($resolved.PathParts.Count -gt 0) {
+            $resolved.PathParts -join " > "
+        } else {
+            $d.DefinitionId
+        }
+        $resolvedSource = if ($d.SourceValue) {
+            Resolve-RawValue -DefinitionId $d.DefinitionId -RawValue $d.SourceValue
+        } else { $null }
+        $resolvedTarget = if ($d.TargetValue) {
+            Resolve-RawValue -DefinitionId $d.DefinitionId -RawValue $d.TargetValue
+        } else { $null }
+        [PSCustomObject]@{
+            DefinitionId     = $d.DefinitionId
+            Setting          = $fullSetting
+            Status           = $d.Status
+            Issue            = $d.Issue
+            SourcePolicyName = $d.SourcePolicyName
+            TargetPolicyName = $d.TargetPolicyName
+            SourceValue      = $resolvedSource
+            TargetValue      = $resolvedTarget
+        }
+    }
+}
+# ─────────────────────────────────────────────────────────────────────────────
+# MERGE ENABLED + CHILDREN → "Enabled: value" / "Disabled"
+#
+# After Resolve-DiffForExport we have rows like:
+#   Setting: VBA Macro Notification Settings   SourceValue: Enabled
+#   Setting: VBA Macro Notification Settings   SourceValue: Disable all except digitally signed macros
+#
+# This function merges them into a single row:
+#   Setting: VBA Macro Notification Settings   SourceValue: Enabled: Disable all except digitally signed macros
+#
+# Rules:
+#   - Parent = row whose SourceValue or TargetValue is "enabled" / "true" / "disabled" / "false"
+#     AND at least one child exists with the same Setting + same policy combination
+#   - If parent is "disabled" / "false" → value becomes "Disabled" (no child expected)
+#   - If parent is "enabled" / "true"  → value becomes "Enabled: <child value>"
+#   - Rows without an enabled/disabled pattern remain unchanged
+# ─────────────────────────────────────────────────────────────────────────────
+function Merge-EnabledWithChildren {
+    param(
+        [Parameter(Mandatory)]
+        [array]$Resolved
+    )
+    $enabledLike  = @('enabled', 'true')
+    $disabledLike = @('disabled', 'false')
+    $toggleLike   = $enabledLike + $disabledLike
+    # Group by Setting + SourcePolicyName + TargetPolicyName
+    $groups = $Resolved | Group-Object -Property Setting, SourcePolicyName, TargetPolicyName
+    $output = [System.Collections.Generic.List[PSCustomObject]]::new()
+    foreach ($g in $groups) {
+        $rows = @($g.Group)
+        if ($rows.Count -eq 1) {
+            # Single row — only normalise Enabled/Disabled if there is no child
+            $r = $rows[0]
+            $sv = if ($r.SourceValue) { $r.SourceValue.Trim().ToLower() } else { $null }
+            $tv = if ($r.TargetValue) { $r.TargetValue.Trim().ToLower() } else { $null }
+            $newSource = if ($sv -in $enabledLike)      { "Enabled" }
+                         elseif ($sv -in $disabledLike) { "Disabled" }
+                         else { $r.SourceValue }
+            $newTarget = if ($tv -in $enabledLike)      { "Enabled" }
+                         elseif ($tv -in $disabledLike) { "Disabled" }
+                         else { $r.TargetValue }
+            $output.Add([PSCustomObject]@{
+                DefinitionId     = $r.DefinitionId
+                Setting          = $r.Setting
+                Status           = $r.Status
+                Issue            = $r.Issue
+                SourcePolicyName = $r.SourcePolicyName
+                TargetPolicyName = $r.TargetPolicyName
+                SourceValue      = $newSource
+                TargetValue      = $newTarget
+            })
+            continue
+        }
+        # Multiple rows — find the parent (enabled/disabled toggle)
+        $parentRows = $rows | Where-Object {
+            ($_.SourceValue -and $_.SourceValue.Trim().ToLower() -in $toggleLike) -or
+            ($_.TargetValue -and $_.TargetValue.Trim().ToLower() -in $toggleLike)
+        }
+        $childRows = $rows | Where-Object { $_ -notin $parentRows }
+        if (-not $parentRows -or -not $childRows) {
+            # No clear parent/child pattern — pass all rows through unchanged
+            foreach ($r in $rows) { $output.Add($r) }
+            continue
+        }
+        # Take the first parent (normally there is only one)
+        $parent = $parentRows | Select-Object -First 1
+        $sv = if ($parent.SourceValue) { $parent.SourceValue.Trim().ToLower() } else { $null }
+        $tv = if ($parent.TargetValue) { $parent.TargetValue.Trim().ToLower() } else { $null }
+        $sourceEnabled  = $sv -in $enabledLike
+        $sourceDisabled = $sv -in $disabledLike
+        $targetEnabled  = $tv -in $enabledLike
+        $targetDisabled = $tv -in $disabledLike
+        foreach ($child in $childRows) {
+            $newSource = if ($sourceEnabled)       { "Enabled: $($child.SourceValue)" }
+                         elseif ($sourceDisabled)  { "Disabled" }
+                         else                      { $child.SourceValue }
+            $newTarget = if ($targetEnabled)       { "Enabled: $($child.TargetValue)" }
+                         elseif ($targetDisabled)  { "Disabled" }
+                         else                      { $child.TargetValue }
+            # Re-evaluate Status based on merged values
+            $mergedStatus = if ($newSource -eq $newTarget) { "Match" } else { $child.Status }
+            $output.Add([PSCustomObject]@{
+                DefinitionId     = $child.DefinitionId
+                Setting          = $child.Setting
+                Status           = $mergedStatus
+                Issue            = $child.Issue
+                SourcePolicyName = $child.SourcePolicyName
+                TargetPolicyName = $child.TargetPolicyName
+                SourceValue      = $newSource
+                TargetValue      = $newTarget
+            })
+        }
+        # Remaining parent rows (edge case: multiple parents) pass through unchanged
+        foreach ($p in ($parentRows | Select-Object -Skip 1)) {
+            $output.Add($p)
+        }
+    }
+    return $output.ToArray()
+}
+# ─────────────────────────────────────────────────────────────────────────────
+# MERGE COLLECTION SETTINGS
+#
+# SimpleSettingCollectionInstance produces N SettingObjects with the same
+# DefinitionId but different RawValues (one per collection item).
+# Compare-RawSettings treats each row independently, causing a cartesian
+# explosion and wrong Match/Diff/Issue results.
+#
+# This function collapses those N rows into ONE row per (PolicyId, DefinitionId)
+# by sorting the values and joining them with "|".
+# All other setting types (1 row per DefinitionId per policy) pass through
+# unchanged.
+#
+# Input  : array of SettingObjects as produced by ConvertTo-SettingObjects
+# Output : same array with collection rows collapsed
+# ─────────────────────────────────────────────────────────────────────────────
+function Merge-CollectionSettings {
+    param(
+        [Parameter(Mandatory)]
+        [array]$Settings
+    )
+
+    # Group by PolicyId + DefinitionId
+    $grouped = $Settings | Group-Object -Property PolicyId, DefinitionId
+
+    foreach ($g in $grouped) {
+        if ($g.Count -eq 1) {
+            # Single row — pass through as-is
+            $g.Group[0]
+        } else {
+            # Multiple rows for the same policy + setting → collection
+            # Sort values for deterministic comparison, join with "|"
+            $first        = $g.Group[0]
+            $sortedValues = ($g.Group | ForEach-Object { $_.RawValue } | Sort-Object) -join "|"
+
+            [PSCustomObject]@{
+                PolicyId           = $first.PolicyId
+                PolicyName         = $first.PolicyName
+                DefinitionId       = $first.DefinitionId
+                ParentDefinitionId = $first.ParentDefinitionId
+                RawValue           = $sortedValues
+                Source             = $first.Source
+            }
+        }
+    }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXPORTS
+# ─────────────────────────────────────────────────────────────────────────────
+Export-ModuleMember -Function @(
+    'Get-RawSettings',
+    'ConvertTo-SettingObjects',
+    'Merge-CollectionSettings',
+    'Resolve-Category',
+    'Get-CategoryPath',
+    'Get-SettingPath',
+    'Resolve-RawValue',
+    'Resolve-DiffForExport',
+    'Merge-EnabledWithChildren'
+)
