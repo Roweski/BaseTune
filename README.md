@@ -136,6 +136,26 @@ Once the download completes, the icon returns to its neutral state — definitio
 
 ---
 
+## Under the Hood: JSON and Graph API Structure
+
+If you export a Settings Catalog policy using the Microsoft Graph API (via the `configurationPolicies` endpoint), you will notice that settings are represented as structured objects within a `settings` array. Each item in this array contains a `settingInstance` object that describes the actual setting.
+
+> **Note:** The `settings` array is not returned by default. Basetune explicitly requests it by appending `$expand=settings` to the API call when loading policies:
+ 
+> ```
+> GET /deviceManagement/configurationPolicies/{id}?$expand=settings
+> ```
+
+The `settingDefinitionId` is a technical identifier that corresponds to the human-readable friendly name shown in the Intune UI. Instead of fetching the  `$expand=settings,settingDefinitions` values per policy, Basetune will download all setting definitions in a single call to a JSON file and reuse them for all subsequent comparisons to minimize API overhead.
+
+
+> ```
+> GET /deviceManagement/configurationSettings
+> ```
+
+
+---
+
 ## How comparison works
 
 1. Policies are loaded for both sides and settings are expanded (online via Graph API or offline from JSON files)
