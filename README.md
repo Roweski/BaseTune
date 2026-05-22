@@ -1,6 +1,6 @@
 # Basetune
 
-> Compare Intune policies across tenants — securely, offline-capable, and fully under your control
+> Compare Intune policies across tenants and baselines — securely, offline-capable, and fully under your control
 
 ![PowerShell](https://img.shields.io/badge/PowerShell-7%2B-blue?logo=powershell)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -8,58 +8,144 @@
 
 ---
 
+## Requirements
+
+- Powershell 7+
+- An **App Registration** with the following Microsoft Graph API **application permissions**: `DeviceManagementConfiguration.Read.All`.
+- Folder with exported JSON policies that contain `id`, `name`, and a `settings` array.
+
+<br>
+
+> **Important:** Please ensure that an administrator grants tenant-wide admin consent for this permission.
+
+---
+
+## Quick Start
+
+1. Download the latest `Basetune.zip` from the [Releases](https://github.com/roweski/basetune/releases/latest) page and extract it to a folder of your choice.
+2. Open the UI and go to the gear icon → **Tenant Configuration**, or edit `Config\Config.json` directly.
+   A reference template is available in `Config\Config.example.json`. Add at least one online tenant with
+   your App Registration credentials (`tenantId`, `clientId`, `clientSecret` or `certThumbprint`).
+3. Download setting definitions to enable friendly display names during comparisons.
+   Click the blue download icon in the UI status bar and select the online tenant from the list, or use the CLI:
+```powershell
+   .\BasetuneCLI.ps1 -Tenants        # find your tenant's Id
+   .\BasetuneCLI.ps1 -Download -Id 1 # replace 1 with your tenant's Id
+```
+4. Select a source and target tenant in the main UI and click **Load** to import policies.
+5. Select source and target policies and click **Compare Policies** to run the comparison and generate the report, or use the CLI:
+```powershell
+   .\BasetuneCLI.ps1 -SourceId -TargetId
+```
+
+---
+
 ## What it does
 
-Basetune is a PowerShell-based tool to compare **Intune Settings Catalog** and **Security Baseline** policies across tenants or exported baselines. Common use cases include compliance audits and baseline comparisons.
-
-Policies can be loaded:
-- **Online** via Microsoft Graph API
-- **Offline** from exported JSON files
+Basetune is a PowerShell-based tool to compare **Intune Settings Catalog** and **Security Baseline** policies across tenants or exported baselines Policies can be loaded online through the Microsoft Graph API or offline from exported JSON files — whichever fits your workflow.
 
 Comparison capabilities:
-- **Source vs. Target** — Each comparison run compares one source against one target. Source and target can be any combination of online tenants and offline JSON folders.
+- **Source vs. Target** — Each run compares one source against one target. Source and target can be any combination of online tenants and offline baselines.
 - **Unlimited tenant configuration** — Configure as many tenants and baselines as you need, then pick which two to compare at runtime (from the UI or via CLI parameters).
 ---
 
 ## Why Basetune?
 
 **Secure by design**
-- Use your own App Registration
-- No delegated authentication (no user context)
-- No third-party multi-tenant apps
+- Use your own App Registration (no third-party multi-tenant applications)
+- **Client secrets are encrypted** using Windows DPAPI (CurrentUser scope) and are never stored in plaintext
+- All access is read-only and fully controlled through your own tenant configuration
 - No external data processing
-- All access is read-only and fully controlled by your own tenant configuration
-- **Client secrets are encrypted** with Windows DPAPI (CurrentUser scope) — never stored in plaintext
-
-**Fully offline capable**
-- Compare exported JSON policies without any tenant connection
 
 **Flexible tenant configuration**
 - Configure an unlimited number of tenants and baselines
-- Mix online and offline sources freely — every comparison picks one source and one target from your configured set
+- Mix online and offline sources during comparisons
 
-**Performance focused**
-- Minimal Graph API calls after initial load
+**Performance-focused**
+- Minimal Microsoft Graph API calls after the initial load
+- Compare baselines offline using exported JSON policies without an internet connection
 - Local caching of policies, settings, and definitions
-- Built-in error handling and retry logic
+- Built-in retry logic and error handling
+
+---
+
+## Setup
+
+**1. Download the latest release**
+
+Go to the [Releases](https://github.com/roweski/basetune/releases/latest) page and download the latest `Basetune.zip`. Extract it to a folder of your choice. 
+
+<br>
+
+**2. Configure your tenants**
+
+Basetune uses a **multi-tenant config** — you define any number of named tenant entries and pick source and target at runtime, either from the UI or via CLI parameters. Each comparison run uses exactly one source and one target.
+
+Tenants are configured through the UI (gear icon → Tenant Configuration) or by editing `Config\Config.json` directly.
+
+> Plaintext `clientSecret` values in `Config.json` are **automatically migrated to encrypted form on first load**. After migration, the on-disk value is replaced with a `DPAPI:`-prefixed blob.
+
+
+Each tenant entry requires:
+
+| Field | Description |
+|---|---|
+| `displayName` | Friendly name shown in dropdowns |
+| `authMethod` | `ClientSecret`, `Certificate`, or `None` (offline JSON only) |
+| `tenantId` | Entra tenant ID |
+| `clientId` | App registration client ID |
+| `clientSecret` | Client secret (when authMethod = ClientSecret). Stored encrypted with DPAPI — see [Secret storage](#secret-storage) |
+| `certThumbprint` | Certificate thumbprint (when authMethod = Certificate) |
+| `path` | Local folder for JSON files (when authMethod = None) |
+
+<br>
+
+**3. Download setting definitions**
+
+Before running your first comparison, download the setting definitions and categories. Basetune uses these to resolve display names in the reports, otherwise the reports will use raw setting definition IDs.
+
+> Both `settingDefinitions.json` and `settingCategories.json` are saved to `.\Definitions` and reused for all subsequent comparisons. 
+
+Run the CLI with `-Download -Id <tenant id>`. The Id represents the unique key in Config.json.
+
+```powershell
+# List current tenant configuration for id lookup
+.\BasetuneCLI.ps1 -Tenants
+
+# Download definitions using the specified online tenant
+.\BasetuneCLI.ps1 -Download -Id 1
+```
+
+Run the UI. When no setting definitions are available, the Download icon in the status bar is highlighted in blue — click it to start.
+
+<a href="docs/controls.png" target="_blank">
+  <img src="docs/controls.png" alt="Status bar with the Download icon highlighted" width="100">
+</a>
+
+Select a tenant from the list, or create a new one in tenant configuration using an app registration.
+
+<a href="docs/definitions.png" target="_blank">
+  <img src="docs/definitions.png" alt="Tenant picker dialog" width="320">
+</a>
+
+Once the download completes, the icon returns to its neutral state — definitions are cached and ready to use.
+
+<a href="docs/controls2.png" target="_blank">
+  <img src="docs/controls2.png" alt="Status bar after definitions have been downloaded" width="100">
+</a>
 
 ---
 
 ## How comparison works
 
-1. Policies are loaded from both tenants (via Graph API or JSON files)
+1. Policies are loaded for both sides and settings are expanded (online via Graph API or offline from JSON files)
 2. Each policy's `settings` array is flattened into individual `settingInstance` objects
 3. Settings are matched by `settingDefinitionId` across source and target
 4. Each pair is classified as **Match**, **Diff**, **Missing**, or **Extra**
 5. If `settingDefinitions.json` and `settingCategories.json` are present in `.\Definitions`, IDs are resolved to friendly display names
 6. Results are written to HTML and CSV
 
-**Setting Definitions:**
-Download setting definitions and categories once via the UI or `-Download` (CLI). Without this cache, reports will show raw setting definition IDs.
-
-**Missing categories:**
-If at least one side is online, missing categories are resolved automatically via Graph API and added to `settingCategories.json`.
-If both sides are offline and a category cannot be resolved, it will appear as **`[Unresolved Category]`** in the report.
+> If at least one side is an online tenant, missing categories are resolved automatically via Graph API and added to `settingCategories.json`. If both sides are offline baselines and a category cannot be resolved, it will appear as **`[Unresolved Category]`** in the report.
 
 ---
 
@@ -77,6 +163,8 @@ On top of that, it detects cross-policy issues within the target tenant:
 - **Duplicate** — the setting appears in multiple target policies with the same value
 - **Conflict** — the setting appears in multiple target policies with different values
 
+<br>
+
 | File | Description |
 |---|---|
 | `diff.csv` | Full detail — one row per source setting × target policy match |
@@ -84,155 +172,15 @@ On top of that, it detects cross-policy issues within the target tenant:
 | `summary.csv` | Per baseline policy: Total / Match / Missing / Diff counts + Compliance % |
 | `overlap.csv` | Only Duplicate and Conflict settings, with all involved target policies and values |
 
+<br>
+
 The HTML report (`report.html`) lets you drill down per setting — expand any row to see exactly which target policies contain that setting and what value each one has. The report header shows the source and target tenant names.
+
+<br>
 
 ![Basetune Report](docs/report.png)
 
-## Supported patterns / edge cases
-
-Below are a number of non-trivial cases that the tool handles correctly. Each entry shows the source setting (as visible in the UI) and how the tool represents it in the report.
-
-### Implicit parent levels in the breadcrumb path
-
-The breadcrumb path in the `Setting` column may contain parent levels that are **not** defined as categories in the categories JSON file. The tool reconstructs the full hierarchy from the policy structure itself, inserting the parent policy name as an additional path segment for its sub-settings.
-
-For example, `Choose how BitLocker-protected operating system drives can be recovered` is not a category in the JSON. Yet it appears as a parent segment in the path of its sub-setting.
-
-This means the breadcrumb path reflects the **logical** hierarchy as shown in the UI, not just the category tree from the JSON. Sub-settings are always prefixed with their parent policy name so that the relationship remains clear in flat output formats (CSV, tables).
-
-### Nested sub-settings under a single parent policy
-
-Some policies contain multiple sub-settings (toggles, dropdowns) under one main setting. The tool splits these into separate rows using a breadcrumb path, and combines the parent value with the selected option into a single string.
-
-**Source setting:**
-
-- *Choose how BitLocker-protected operating system drives can be recovered* → `Enabled`
-  - *Allow data recovery agent* → `False`
-  - Dropdown → `Do not allow 256-bit recovery key`
-
-**Report output:**
-
-| Setting | Source value |
-|---|---|
-| Administrative Templates > Windows Components > BitLocker Drive Encryption > Operating System Drives > Choose how BitLocker-protected operating system drives can be recovered | Enabled: Do not allow 256-bit recovery key |
-| Administrative Templates > Windows Components > BitLocker Drive Encryption > Operating System Drives > Choose how BitLocker-protected operating system drives can be recovered > Allow data recovery agent | Disabled |
-
-### List values (variable length)
-
-Policies that contain a list of values (such as file extensions, keywords, or paths) are serialized as a single string with `|` as the separator. The parent toggle and the list are shown as separate rows.
-
-**Source setting:**
-
-- *Exclude specific kinds of files from being uploaded* → `Enabled`
-  - Keywords: `*.accdb`, `*.appx`, `*.bat`, `*.cmd`, `*.exe`, `*.img`, `*.iso`, `*.jar`, `*.lnk`, `*.mdb`, `*.msi`, `*.pst`, `*.reg`, `*.vbs`, `*.vhd`, `*.vhdx`, `*.vmdk`
-
-**Report output:**
-
-| Setting | Source value |
-|---|---|
-| OneDrive > Exclude specific kinds of files from being uploaded | Enabled |
-| OneDrive > Exclude specific kinds of files from being uploaded > Keywords: (Device) | *.accdb \| *.appx \| *.bat \| *.cmd \| *.exe \| *.img \| *.iso \| *.jar \| *.lnk \| *.mdb \| *.msi \| *.pst \| *.reg \| *.vbs \| *.vhd \| *.vhdx \| *.vmdk |
-
----
-
-## Requirements
-
-- PowerShell 7+
-- An **App Registration** in each tenant with the following Microsoft Graph API **application permissions**:
-  - `DeviceManagementConfiguration.Read.All`
-- Auth methods supported: `ClientSecret` or `Certificate` (both use the **OAuth 2.0 client credentials flow** — app-only, no user login required)
-
----
-
-
-## Setup
-
-**1. Download the latest release**
-
-Go to the [Releases](https://github.com/roweski/basetune/releases/latest) page and download the latest `Basetune.zip`. Extract it to a folder of your choice.
-
-**2. Configure your tenants**
-
-Basetune uses a **multi-tenant config** — you define any number of named tenant entries and pick source and target at runtime, either from the UI or via CLI parameters. Each comparison run uses exactly one source and one target.
-
-Tenants are configured through the UI (gear icon → Tenant Configuration) or by editing `Config\Config.json` directly.
-
-Each tenant entry requires:
-
-| Field | Description |
-|---|---|
-| `displayName` | Friendly name shown in dropdowns |
-| `authMethod` | `ClientSecret`, `Certificate`, or `None` (offline JSON only) |
-| `tenantId` | Entra tenant ID |
-| `clientId` | App registration client ID |
-| `clientSecret` | Client secret (when authMethod = ClientSecret). Stored encrypted with DPAPI — see [Secret storage](#secret-storage) |
-| `certThumbprint` | Certificate thumbprint (when authMethod = Certificate) |
-| `path` | Local folder for JSON files (when authMethod = None) |
-
-
-Example `Config\Config.example.json`:
-
-```json
-{
-  "tenant": {
-    "1": {
-      "displayName": "Contoso",
-      "authMethod": "ClientSecret",
-      "tenantId": "00000000-0000-0000-0000-000000000000",
-      "clientId": "00000000-0000-0000-0000-000000000000",
-      "clientSecret": "your-client-secret-here"
-    },
-    "2": {
-      "displayName": "Fabrikam",
-      "authMethod": "Certificate",
-      "tenantId": "11111111-1111-1111-1111-111111111111",
-      "clientId": "11111111-1111-1111-1111-111111111111",
-      "certThumbprint": "YOUR_CERTIFICATE_THUMBPRINT"
-    },
-    "3": {
-      "displayName": "OIB v3.8",
-      "authMethod": "None",
-      "path": "C:\\Export\\OpenIntuneBaseline-main\\WINDOWS\\IntuneManagement\\SettingsCatalog"
-    }
-  }
-}
-```
-
-> Plaintext `clientSecret` values in `Config.json` (e.g. from the example above, or copied from an older install) are **automatically migrated to encrypted form on first load**. After migration, the on-disk value is replaced with a `DPAPI:`-prefixed blob — the original plaintext is gone. See [Secret storage](#secret-storage) for details.
-
-> For `Certificate` auth, the certificate must be available in the Windows Certificate Store. Basetune looks in **`CurrentUser\My`** first and falls back to **`LocalMachine\My`**. To import a certificate, double-click the `.pfx` file and choose **Current User**, or use `certmgr.msc`. The certificate is used to sign a JWT assertion (RS256) as the client credential in the OAuth 2.0 token request.
-
-**3. Download setting definitions (run once in online mode)**
-
-Before running your first comparison, download the setting definitions and categories. Basetune uses these to resolve display names in the reports, otherwise the reports will use raw setting definition IDs. Both `settingDefinitions.json` and `settingCategories.json` are saved to `.\Definitions` and reused for all subsequent comparisons.
-
-To pre-populate the definition and category cache, run the CLI with `-Download -Id <id>` using an online tenant. The Id represents the unique key in Config.json (use `.\BasetuneCLI.ps1 -Tenants` to list all tenants):
-
-```powershell
-# Explicit tenant (recommended)
-.\BasetuneCLI.ps1 -Download -Id 1
-
-# Without -Id: falls back to the first online tenant in Config.json
-.\BasetuneCLI.ps1 -Download
-```
-
-Or use the UI. When no setting definitions are available, the Download icon in the status bar is highlighted in blue — click it to start.
-
-<a href="docs/controls.png" target="_blank">
-  <img src="docs/controls.png" alt="Status bar with the Download icon highlighted" width="100">
-</a>
-
-Select a tenant from the list, or create a new one in the tenant configuration using an app registration.
-
-<a href="docs/definitions.png" target="_blank">
-  <img src="docs/definitions.png" alt="Tenant picker dialog" width="320">
-</a>
-
-Once the download completes, the icon returns to its neutral state — definitions are cached and ready to use.
-
-<a href="docs/controls2.png" target="_blank">
-  <img src="docs/controls2.png" alt="Status bar after definitions have been downloaded" width="100">
-</a>
+<br>
 
 ---
 
@@ -260,23 +208,13 @@ Basetune includes a WPF-based UI for configuring and running comparisons without
 
 Manage all tenants via Tenant Configuration.
 
-Tenant with App Registration:
+Online tenant using an App Registration:
 
 <a href="docs/tenant.png" target="_blank">
   <img src="docs/tenant.png" alt="Tenant Configuration" width="580">
 </a>
 
-**App Permissions**
-
-To function correctly, the App Registration only requires a single Microsoft Graph permission: `DeviceManagementConfiguration.Read.All`
-
-> ⚠️ **Important:** Please ensure that an administrator grants tenant-wide admin consent for this permission after adding it.
-
-<a href="docs/permissions.png" target="_blank">
-  <img src="docs/permissions.png" alt="App Permissions" width="580">
-</a>
-
-Tenant with exported JSON policies:
+Offline baseline using exported JSON policies:
 
 <a href="docs/json.png" target="_blank">
   <img src="docs/json.png" alt="Tenant Configuration" width="580">
@@ -317,21 +255,11 @@ Basetune includes a command-line interface for running comparisons and exports f
 
 ## Authentication
 
-Basetune uses a **stateless authentication model**.
+Basetune uses a **stateless authentication model**. A a result, tokens are retrieved **on demand** and stored **in memory only**. 
 
-### Stateless token handling
+Authentication methods supported are `Client Secret` or `Certificate`. Both use the **OAuth 2.0 client credentials flow**.
 
-- Tokens are retrieved **on demand**
-- Stored **in memory only**
-- **Never written to disk**
-- **Never persisted or reused**
-
-### No external dependencies
-
-Basetune does **not require**:
-- Multi-tenant app registrations
-- External services
-- Shared authentication
+Certificate-based tenants don't store any secret in `Config.json` — only the certificate thumbprint. The private key lives in the Windows Certificate Store (`CurrentUser\My` or `LocalMachine\My`) and is used to sign a JWT assertion (RS256) on each token request. The same `CurrentUser` vs `LocalMachine` trade-off applies to where you import the certificate.
 
 ---
 
@@ -343,18 +271,8 @@ Client secrets for `ClientSecret` tenants are stored in `Config\Config.json` in 
 
 - **Encryption scope:** `CurrentUser` — the secret can only be decrypted by the **same Windows user** on the **same machine** that encrypted it. Other users on the same box (including local admins) cannot decrypt it.
 - **Storage format:** encrypted values in `Config.json` are prefixed with `DPAPI:` followed by a hex-encoded blob. Anything without that prefix is treated as plaintext.
-- **Automatic migration:** if you place a plaintext secret in `Config.json` (e.g. from the example file, or from an older install), Basetune detects it on first load, encrypts it with DPAPI, and rewrites `Config.json` in place. The plaintext value is replaced — no manual step needed.
-- **In memory:** decrypted secrets exist briefly in memory only for the duration of the OAuth 2.0 token request, then drop out of scope. Tokens themselves are never persisted (see [Authentication](#authentication)).
-
-### What this means in practice
-
-| Scenario | Behaviour |
-|---|---|
-| You configure a tenant via the UI | Secret is encrypted before it's written to disk |
-| You paste a plaintext secret directly into `Config.json` | Encrypted automatically on next load |
-| You copy `Config.json` to a colleague's machine | Their Basetune cannot decrypt the secrets — the UI will log a clear "re-enter the secret" message per tenant. The tenant entries still appear, only the credentials are missing. |
-| You copy `Config.json` to a different Windows user account on the same machine | Same as above — DPAPI `CurrentUser` scope binds to the user profile, not the machine |
-| You move to a new machine | Re-enter secrets once on the new machine; from then on they're encrypted under that user/machine combination |
+- **Automatic migration:** if you place a plaintext secret in `Config.json`, Basetune detects it on first load, encrypts it with DPAPI, and rewrites `Config.json` in place. The plaintext value is replaced — no manual step needed.
+- **In memory:** decrypted secrets exist briefly in memory only for the duration of the OAuth 2.0 token request, then drop out of scope. Tokens themselves are never persisted.
 
 ### Why CurrentUser scope (and not LocalMachine)
 
@@ -364,33 +282,65 @@ Client secrets for `ClientSecret` tenants are stored in `Config\Config.json` in 
 
 Because DPAPI binds the encrypted secret to the **Windows user profile that encrypted it**, running the CLI under a different account — for example via Task Scheduler under a service account — requires a one-time setup step in that account's context.
 
-**Setup steps for a service account (e.g. `svc-basetune`)**
+---
 
-1. Log in interactively as the service account (RDP, `runas /user:svc-basetune powershell`, or "Switch user"). The DPAPI master key is created when the user profile is first loaded.
-2. Create or copy `Config.json` into the Basetune folder. Plaintext secrets are fine at this stage — they'll be migrated on first load.
-3. Trigger one config load under that account to perform the plaintext → DPAPI migration. The cheapest way:
-   ```powershell
-   .\BasetuneCLI.ps1 -Tenants
-   ```
-   This reads `Config.json`, encrypts any plaintext `clientSecret` values under the service account's DPAPI key, and writes the encrypted form back to disk.
-4. From this point on, scheduled tasks running as `svc-basetune` can decrypt the secrets and authenticate normally.
+## Offline JSON compatibility
 
-**Common pitfalls**
+Offline mode accepts Intune Settings Catalog and Security Baseline JSON files exported by any of the following tools:
 
-| Situation | Result |
+| Source | How to export |
 |---|---|
-| `Config.json` was created by your own user and then placed in the service account's folder | Scheduled task fails with `Cannot decrypt clientSecret`. Different DPAPI master key. Repeat steps 2–3 under the service account. |
-| Task scheduled with "Run whether user is logged on or not" | Works fine. DPAPI only requires the profile to have been loaded *at least once*, not to be currently active. |
-| Service account uses `gMSA` (group Managed Service Account) or `Virtual Account` | DPAPI is unreliable or unavailable for these account types — they often have no loadable profile. Use **Certificate authentication** instead (see below). |
-| The machine is reimaged or the service account is recreated | DPAPI master key is gone. Re-enter all secrets via the UI, or restart from plaintext in `Config.json` and re-run step 3. |
+| **Basetune CLI** | Use `-Export <tenant id>` |
+| **Basetune UI** | Click the export button. |
+| **Intune portal** | Devices → Configuration → select policy → Export JSON |
+| **[Open Intune Baseline](https://github.com/SkipToTheEndpoint/OpenIntuneBaseline)** | Download JSON files from GitHub |
+| **[Micke-K IntuneManagement](https://github.com/Micke-K/IntuneManagement)** | Export Settings Catalog policies via the built-in export |
 
-**Recommendation for automation**
+> Any JSON that contains `id`, `name`, and a `settings` array will work with Basetune.
 
-For unattended scenarios — especially on servers, with gMSA accounts, or anywhere the profile may not be reliably loaded — prefer **Certificate authentication**. A certificate in `LocalMachine\My` can be used by any account with read access to the private key, doesn't depend on DPAPI, and survives profile resets. The certificate thumbprint stored in `Config.json` is not a secret and doesn't need encryption.
+---
 
-### Certificate authentication
+## Comparison edge cases
 
-Certificate-based tenants don't store any secret in `Config.json` — only the certificate thumbprint. The private key lives in the Windows Certificate Store (`CurrentUser\My` or `LocalMachine\My`) and is used to sign a JWT assertion (RS256) on each token request. The same `CurrentUser` vs `LocalMachine` trade-off applies to where you import the certificate.
+Below are a number of non-trivial cases that the tool handles correctly. Each entry shows the source setting (as visible in the UI) and how the tool represents it in the report.
+
+### Implicit parent levels in the breadcrumb path
+
+The setting path in the `Setting` column may contain parent levels that are **not** defined as categories in the categories JSON file. The tool reconstructs the full hierarchy, this means the  path reflects the **logical** hierarchy as shown in the UI, not just the category tree from the JSON.
+
+For example, `Choose how BitLocker-protected operating system drives can be recovered` is not a category in the JSON. Yet it appears as a parent segment in the path of its sub-setting.
+
+### Nested sub-settings under a single parent policy
+
+Some policies contain multiple sub-settings (toggles, dropdowns) under one main setting. The tool splits these into separate rows using a breadcrumb path, and combines the parent value with the selected option into a single string.
+
+**Source setting:**
+
+- *Choose how BitLocker-protected operating system drives can be recovered* → `Enabled`
+  - Dropdown → `Do not allow 256-bit recovery key`
+
+**Report output:**
+
+| Setting | Source value |
+|---|---|
+| Administrative Templates > Windows Components > BitLocker Drive Encryption > Operating System Drives > Choose how BitLocker-protected operating system drives can be recovered | Enabled: Do not allow 256-bit recovery key |
+| Administrative Templates > Windows Components > BitLocker Drive Encryption > Operating System Drives > Choose how BitLocker-protected operating system drives can be recovered > Allow data recovery agent | Disabled |
+
+### List values (variable length)
+
+Policies that contain a list of values (such as file extensions, keywords, or paths) are serialized as a single string with `|` as the separator. The parent toggle and the list are shown as separate rows.
+
+**Source setting:**
+
+- *Exclude specific kinds of files from being uploaded* → `Enabled`
+  - Keywords: `*.accdb`, `*.appx`, `*.bat`, `*.cmd`, `*.exe`, `*.img`, `*.iso`, `*.jar`, `*.lnk`, `*.mdb`, `*.msi`, `*.pst`, `*.reg`, `*.vbs`, `*.vhd`, `*.vhdx`, `*.vmdk`
+
+**Report output:**
+
+| Setting | Source value |
+|---|---|
+| OneDrive > Exclude specific kinds of files from being uploaded | Enabled |
+| OneDrive > Exclude specific kinds of files from being uploaded > Keywords: (Device) | *.accdb \| *.appx \| *.bat \| *.cmd \| *.exe \| *.img \| *.iso \| *.jar \| *.lnk \| *.mdb \| *.msi \| *.pst \| *.reg \| *.vbs \| *.vhd \| *.vhdx \| *.vmdk |
 
 ---
 
@@ -414,23 +364,6 @@ When configuring **Parallel Threads** for settings expansion or policy evaluatio
 * **Higher thread counts** will speed up the process initially.
 * However, excessive parallel requests increase the likelihood of triggering **HTTP 429 (Throttling)**.
 * While the module gracefully handles this by pausing and retrying, heavy throttling will ultimately reduce overall performance and introduce execution delays. Find a balanced thread count that optimizes speed without constantly hitting rate limits.
----
-
-
-
-## Offline JSON compatibility
-
-Offline mode accepts Intune Settings Catalog and Security Baseline JSON files exported by any of the following tools:
-
-| Source | How to export |
-|---|---|
-| **Basetune CLI** | Use `-Export <tenant id>` |
-| **Basetune UI** | Click the export button. |
-| **Intune portal** | Devices → Configuration → select policy → Export JSON |
-| **[Open Intune Baseline](https://github.com/SkipToTheEndpoint/OpenIntuneBaseline)** | Download JSON files from GitHub |
-| **[Micke-K IntuneManagement](https://github.com/Micke-K/IntuneManagement)** | Export Settings Catalog policies via the built-in export |
-
-> Any JSON that contains `id`, `name`, and a `settings` array will work with Basetune.
 
 ---
 
