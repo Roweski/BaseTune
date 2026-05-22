@@ -302,17 +302,17 @@ Offline mode accepts Intune Settings Catalog and Security Baseline JSON files ex
 
 ## Comparison edge cases
 
-Below are a number of non-trivial cases that the tool handles correctly. Each entry shows the source setting (as visible in the UI) and how the tool represents it in the report.
+Below are a number of non-trivial cases that the tool handles correctly.
 
 ### Implicit parent levels in the breadcrumb path
 
-The setting path in the `Setting` column may contain parent levels that are **not** defined as categories in the categories JSON file. The tool reconstructs the full hierarchy, this means the  path reflects the **logical** hierarchy as shown in the UI, not just the category tree from the JSON.
+The setting path in the `Setting` column may contain parent levels that are **not** defined as categories in the categories JSON file. The tool reconstructs the full hierarchy, this means the path reflects the **logical** hierarchy as shown in the UI, not just the category tree from the JSON.
 
 For example, `Choose how BitLocker-protected operating system drives can be recovered` is not a category in the JSON. Yet it appears as a parent segment in the path of its sub-setting.
 
-### Nested sub-settings under a single parent policy
+### Nested sub-settings
 
-Some policies contain multiple sub-settings (toggles, dropdowns) under one main setting. The tool splits these into separate rows using a breadcrumb path, and combines the parent value with the selected option into a single string.
+Some settings contain additional configuration options that only become available when the parent setting is set to **Enabled**. Basetune combines these into a single readable output value: `Enabled: SelectedValue`
 
 **Source setting:**
 
@@ -323,8 +323,7 @@ Some policies contain multiple sub-settings (toggles, dropdowns) under one main 
 
 | Setting | Source value |
 |---|---|
-| Administrative Templates > Windows Components > BitLocker Drive Encryption > Operating System Drives > Choose how BitLocker-protected operating system drives can be recovered | Enabled: Do not allow 256-bit recovery key |
-| Administrative Templates > Windows Components > BitLocker Drive Encryption > Operating System Drives > Choose how BitLocker-protected operating system drives can be recovered > Allow data recovery agent | Disabled |
+| Administrative Templates > Windows Components > BitLocker Drive Encryption > Operating System Drives > Choose how BitLocker-protected operating system drives can be recovered | Enabled: Do not allow 256-bit recovery |
 
 ### List values (variable length)
 
