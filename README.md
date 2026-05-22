@@ -1,6 +1,6 @@
 # Basetune
 
-> Compare Intune policies across tenants and baselines — securely, offline-capable, and fully under your control
+> Compare Intune Settings Catalog policies across tenants and baselines — securely, offline-capable, and fully under your control
 
 ![PowerShell](https://img.shields.io/badge/PowerShell-7%2B-blue?logo=powershell)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -42,7 +42,7 @@
 
 ## What it does
 
-Basetune is a PowerShell-based tool to compare **Intune Settings Catalog** and **Security Baseline** policies across tenants or exported baselines Policies can be loaded online through the Microsoft Graph API or offline from exported JSON files — whichever fits your workflow.
+Basetune is a Powershell-based tool to compare **Intune Settings Catalog** and **Security Baseline** policies across tenants or exported baselines.  Policies can be loaded online through the Microsoft Graph API or offline from exported JSON files — whichever fits your workflow.
 
 Comparison capabilities:
 - **Source vs. Target** — Each run compares one source against one target. Source and target can be any combination of online tenants and offline baselines.
