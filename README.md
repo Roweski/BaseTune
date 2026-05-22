@@ -258,12 +258,22 @@ Basetune includes a WPF-based UI for configuring and running comparisons without
 
 ### Tenant Configuration
 
-Manage all tenants in the Tenant Configuration.
+Manage all tenants via Tenant Configuration.
 
 Tenant with App Registration:
 
 <a href="docs/tenant.png" target="_blank">
   <img src="docs/tenant.png" alt="Tenant Configuration" width="580">
+</a>
+
+**App Permissions**
+
+To function correctly, the App Registration only requires a single Microsoft Graph permission: `DeviceManagementConfiguration.Read.All`
+
+> ⚠️ **Important:** Please ensure that an administrator grants tenant-wide admin consent for this permission after adding it.
+
+<a href="docs/permissions.png" target="_blank">
+  <img src="docs/permissions.png" alt="App Permissions" width="580">
 </a>
 
 Tenant with exported JSON policies:
