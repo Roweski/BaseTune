@@ -153,6 +153,7 @@ requiring an active connection.
 
 > ```
 > GET /deviceManagement/configurationSettings
+> GET /deviceManagement/configurationCategories
 > ```
 
 
