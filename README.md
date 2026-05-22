@@ -8,6 +8,33 @@
 
 ---
 
+## Requirements
+
+- Powershell 7+
+- An **App Registration** with the following Microsoft Graph API **application permissions**: `DeviceManagementConfiguration.Read.All`.
+- Folder with exported JSON policies that contain `id`, `name`, and a `settings` array.
+
+<br>
+
+> **Important:** Please ensure that an administrator grants tenant-wide admin consent for this permission.
+
+---
+
+## Quick Start
+
+1. Download the latest `Basetune.zip` from the [Releases](https://github.com/roweski/basetune/releases/latest) page and extract it to a folder of your choice.
+2. Open the UI and go to the gear icon → **Tenant Configuration**, or edit `Config\Config.json` directly. Add at least one online tenant with your App Registration credentials (`tenantId`, `clientId`, `clientSecret` or `certThumbprint`).
+3. Download setting definitions to enable friendly display names during comparisons:
+
+```powershell
+.\BasetuneCLI.ps1 -Tenants        # find your tenant's Id
+.\BasetuneCLI.ps1 -Download -Id 1 # replace 1 with your tenant's Id
+```
+
+Or click the blue download icon in the UI status bar and select the online tenant from the list.
+
+---
+
 ## What it does
 
 Basetune is a PowerShell-based tool to compare **Intune Settings Catalog** and **Security Baseline** policies across tenants or exported baselines Policies can be loaded online through the Microsoft Graph API or offline from exported JSON files — whichever fits your workflow.
@@ -34,6 +61,73 @@ Comparison capabilities:
 - Compare baselines offline using exported JSON policies without an internet connection
 - Local caching of policies, settings, and definitions
 - Built-in retry logic and error handling
+
+---
+
+## Setup
+
+**1. Download the latest release**
+
+Go to the [Releases](https://github.com/roweski/basetune/releases/latest) page and download the latest `Basetune.zip`. Extract it to a folder of your choice. 
+
+<br>
+
+**2. Configure your tenants**
+
+Basetune uses a **multi-tenant config** — you define any number of named tenant entries and pick source and target at runtime, either from the UI or via CLI parameters. Each comparison run uses exactly one source and one target.
+
+Tenants are configured through the UI (gear icon → Tenant Configuration) or by editing `Config\Config.json` directly.
+
+> Plaintext `clientSecret` values in `Config.json` are **automatically migrated to encrypted form on first load**. After migration, the on-disk value is replaced with a `DPAPI:`-prefixed blob.
+
+
+Each tenant entry requires:
+
+| Field | Description |
+|---|---|
+| `displayName` | Friendly name shown in dropdowns |
+| `authMethod` | `ClientSecret`, `Certificate`, or `None` (offline JSON only) |
+| `tenantId` | Entra tenant ID |
+| `clientId` | App registration client ID |
+| `clientSecret` | Client secret (when authMethod = ClientSecret). Stored encrypted with DPAPI — see [Secret storage](#secret-storage) |
+| `certThumbprint` | Certificate thumbprint (when authMethod = Certificate) |
+| `path` | Local folder for JSON files (when authMethod = None) |
+
+<br>
+
+**3. Download setting definitions**
+
+Before running your first comparison, download the setting definitions and categories. Basetune uses these to resolve display names in the reports, otherwise the reports will use raw setting definition IDs.
+
+> Both `settingDefinitions.json` and `settingCategories.json` are saved to `.\Definitions` and reused for all subsequent comparisons. 
+
+Run the CLI with `-Download -Id <tenant id>`. The Id represents the unique key in Config.json.
+
+```powershell
+# List current tenant configuration for id lookup
+.\BasetuneCLI.ps1 -Tenants
+
+# Download definitions using the specified online tenant
+.\BasetuneCLI.ps1 -Download -Id 1
+```
+
+Run the UI. When no setting definitions are available, the Download icon in the status bar is highlighted in blue — click it to start.
+
+<a href="docs/controls.png" target="_blank">
+  <img src="docs/controls.png" alt="Status bar with the Download icon highlighted" width="100">
+</a>
+
+Select a tenant from the list, or create a new one in tenant configuration using an app registration.
+
+<a href="docs/definitions.png" target="_blank">
+  <img src="docs/definitions.png" alt="Tenant picker dialog" width="320">
+</a>
+
+Once the download completes, the icon returns to its neutral state — definitions are cached and ready to use.
+
+<a href="docs/controls2.png" target="_blank">
+  <img src="docs/controls2.png" alt="Status bar after definitions have been downloaded" width="100">
+</a>
 
 ---
 
@@ -82,85 +176,6 @@ The HTML report (`report.html`) lets you drill down per setting — expand any r
 ![Basetune Report](docs/report.png)
 
 <br>
-
----
-
-## Requirements
-
-- Powershell 7+
-- An **App Registration** with the following Microsoft Graph API **application permissions**: `DeviceManagementConfiguration.Read.All`.
-- Folder with exported JSON policies that contain `id`, `name`, and a `settings` array.
-
-<br>
-
-> **Important:** Please ensure that an administrator grants tenant-wide admin consent for this permission.
-
----
-
-## Setup
-
-**1. Download the latest release**
-
-Go to the [Releases](https://github.com/roweski/basetune/releases/latest) page and download the latest `Basetune.zip`. Extract it to a folder of your choice. 
-
-<br>
-
-**2. Configure your tenants**
-
-Basetune uses a **multi-tenant config** — you define any number of named tenant entries and pick source and target at runtime, either from the UI or via CLI parameters. Each comparison run uses exactly one source and one target.
-
-Tenants are configured through the UI (gear icon → Tenant Configuration) or by editing `Config\Config.json` directly.
-
-> Plaintext `clientSecret` values in `Config.json` are **automatically migrated to encrypted form on first load**. After migration, the on-disk value is replaced with a `DPAPI:`-prefixed blob.
-
-
-Each tenant entry requires:
-
-| Field | Description |
-|---|---|
-| `displayName` | Friendly name shown in dropdowns |
-| `authMethod` | `ClientSecret`, `Certificate`, or `None` (offline JSON only) |
-| `tenantId` | Entra tenant ID |
-| `clientId` | App registration client ID |
-| `clientSecret` | Client secret (when authMethod = ClientSecret). Stored encrypted with DPAPI — see [Secret storage](#secret-storage) |
-| `certThumbprint` | Certificate thumbprint (when authMethod = Certificate) |
-| `path` | Local folder for JSON files (when authMethod = None) |
-
-<br>
-
-**3. Download setting definitions**
-
-Before running your first comparison, download the setting definitions and categories. Basetune uses these to resolve display names in the reports, otherwise the reports will use raw setting definition IDs.
-
-> Both `settingDefinitions.json` and `settingCategories.json` are saved to `.\Definitions` and reused for all subsequent comparisons. 
-
-Run the CLI with `-Download -Id <tenant id>`. The Id represents the unique key in Config.json.
-
-```powershell
-# List current tenant configuration for id lookup
-.\BasetuneCLI.ps1 -Tenants
-
-# Download definitions using the specifiekd online  tenant
-.\BasetuneCLI.ps1 -Download -Id 1
-```
-
-Run the UI. When no setting definitions are available, the Download icon in the status bar is highlighted in blue — click it to start.
-
-<a href="docs/controls.png" target="_blank">
-  <img src="docs/controls.png" alt="Status bar with the Download icon highlighted" width="100">
-</a>
-
-Select a tenant from the list, or create a new one in tenant configuration using an app registration.
-
-<a href="docs/definitions.png" target="_blank">
-  <img src="docs/definitions.png" alt="Tenant picker dialog" width="320">
-</a>
-
-Once the download completes, the icon returns to its neutral state — definitions are cached and ready to use.
-
-<a href="docs/controls2.png" target="_blank">
-  <img src="docs/controls2.png" alt="Status bar after definitions have been downloaded" width="100">
-</a>
 
 ---
 
