@@ -23,7 +23,9 @@
 ## Quick Start
 
 1. Download the latest `Basetune.zip` from the [Releases](https://github.com/roweski/basetune/releases/latest) page and extract it to a folder of your choice.
-2. Open the UI and go to the gear icon → **Tenant Configuration**, or edit `Config\Config.json` directly. Add at least one online tenant with your App Registration credentials (`tenantId`, `clientId`, `clientSecret` or `certThumbprint`).
+2. Open the UI and go to the gear icon → **Tenant Configuration**, or edit `Config\Config.json` directly.
+   A reference template is available in `Config\Config.example.json`. Add at least one online tenant with
+   your App Registration credentials (`tenantId`, `clientId`, `clientSecret` or `certThumbprint`).
 3. Download setting definitions to enable friendly display names during comparisons:
 
 ```powershell
