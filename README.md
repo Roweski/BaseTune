@@ -146,7 +146,9 @@ If you export a Settings Catalog policy using the Microsoft Graph API (via the `
 > GET /deviceManagement/configurationPolicies/{id}?$expand=settings
 > ```
 
-The `settingDefinitionId` is a technical identifier that corresponds to the human-readable friendly name shown in the Intune UI. Instead of fetching the  `$expand=settings,settingDefinitions` values per policy, Basetune will download all setting definitions in a single call to a JSON file and reuse them for all subsequent comparisons to minimize API overhead.
+The `settingDefinitionId` is a technical identifier that corresponds to the human-readable friendly name shown in the Intune UI. Instead of fetching the  `$expand=settings,settingDefinitions` values per policy, Basetune downloads all setting definitions in a single call to a JSON file. These are reused 
+for all subsequent comparisons to minimize API overhead and enable offline comparisons without 
+requiring an active connection.
 
 
 > ```
