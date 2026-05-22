@@ -26,14 +26,17 @@
 2. Open the UI and go to the gear icon → **Tenant Configuration**, or edit `Config\Config.json` directly.
    A reference template is available in `Config\Config.example.json`. Add at least one online tenant with
    your App Registration credentials (`tenantId`, `clientId`, `clientSecret` or `certThumbprint`).
-3. Download setting definitions to enable friendly display names during comparisons:
-
+3. Download setting definitions to enable friendly display names during comparisons.
+   Click the blue download icon in the UI status bar and select the online tenant from the list, or use the CLI:
 ```powershell
-.\BasetuneCLI.ps1 -Tenants        # find your tenant's Id
-.\BasetuneCLI.ps1 -Download -Id 1 # replace 1 with your tenant's Id
+   .\BasetuneCLI.ps1 -Tenants        # find your tenant's Id
+   .\BasetuneCLI.ps1 -Download -Id 1 # replace 1 with your tenant's Id
 ```
-
-Or click the blue download icon in the UI status bar and select the online tenant from the list.
+4. Select a source and target tenant in the main UI and click **Load** to import policies.
+5. Select source and target policies and click **Compare Policies** to run the comparison and generate the report, or use the CLI:
+```powershell
+   .\BasetuneCLI.ps1 -SourceId -TargetId
+```
 
 ---
 
