@@ -11,8 +11,8 @@
 ## Requirements
 
 - Powershell 7+
-- An **App Registration** with the following Microsoft Graph API **application permissions**: `DeviceManagementConfiguration.Read.All`.
-- Folder with exported JSON policies that contain `id`, `name`, and a `settings` array.
+- A Microsoft Entra App Registration with the **DeviceManagementConfiguration.Read.All** Application permission for Microsoft Graph API.
+- A directory of exported policy files in JSON format. Each file is expected to contain the following fields: id, name, and a settings array.
 
 <br>
 
@@ -29,13 +29,13 @@
 3. Download setting definitions to enable friendly display names during comparisons.
    Click the blue download icon in the UI status bar and select the online tenant from the list, or use the CLI:
 ```powershell
-   .\BasetuneCLI.ps1 -Tenants        # find your tenant's Id
-   .\BasetuneCLI.ps1 -Download -Id 1 # replace 1 with your tenant's Id
+   .\BasetuneCLI.ps1 -Tenants # find your tenant's Id        
+   .\BasetuneCLI.ps1 -Download -Id <tenant id>
 ```
 4. Select a source and target tenant in the main UI and click **Load** to import policies.
-5. Select source and target policies and click **Compare Policies** to run the comparison and generate the report, or use the CLI:
+5. Select at least one source and target policy and click **Compare Policies** to run the comparison and generate the report, or use the CLI:
 ```powershell
-   .\BasetuneCLI.ps1 -SourceId -TargetId
+   .\BasetuneCLI.ps1 -SourceId <tenant id> -TargetId <tenant id>
 ```
 
 ---
@@ -102,7 +102,7 @@ Each tenant entry requires:
 
 **3. Download setting definitions**
 
-Before running your first comparison, download the setting definitions and categories. Basetune uses these to resolve display names in the reports, otherwise the reports will use raw setting definition IDs.
+Before running your first comparison, download the setting definitions and categories. Basetune uses these to resolve friendly display names in the reports; without them, the reports will display raw setting definition IDs.
 
 > Both `settingDefinitions.json` and `settingCategories.json` are saved to `.\Definitions` and reused for all subsequent comparisons. 
 
@@ -141,21 +141,23 @@ Once the download completes, the icon returns to its neutral state — definitio
 If you export a Settings Catalog policy using the Microsoft Graph API (via the `configurationPolicies` endpoint), you will notice that settings are represented as structured objects within a `settings` array. Each item in this array contains a `settingInstance` object that describes the actual setting.
 
 > **Note:** The `settings` array is not returned by default. Basetune explicitly requests it by appending `$expand=settings` to the API call when loading policies:
- 
+
 > ```
 > GET /deviceManagement/configurationPolicies/{id}?$expand=settings
 > ```
 
-The `settingDefinitionId` is a technical identifier that corresponds to the human-readable friendly name shown in the Intune UI. Instead of fetching the  `$expand=settings,settingDefinitions` values per policy, Basetune downloads all setting definitions in a single call to a JSON file. These are reused 
-for all subsequent comparisons to minimize API overhead and enable offline comparisons without 
-requiring an active connection.
+To avoid fetching the full policy list and their expanded settings in a single blocking call, Basetune first retrieves all policies using a lightweight list call that selects only the metadata fields it needs. If a **filter** is configured, only policies whose name matches the filter are passed to the next step. Basetune then **expands** the settings for each remaining policy individually — in parallel, with a configurable thread limit. This parallel approach significantly reduces total loading time when a tenant contains a large number of policies.
 
+The `settingDefinitionId` is a technical identifier that corresponds to the human-readable friendly name shown in the Intune UI. Instead of fetching the `$expand=settings,settingDefinitions` values per policy, Basetune downloads all setting definitions in a single call to a JSON file. These are reused for all subsequent comparisons to minimize API overhead and enable **offline** comparisons without requiring an active connection.
 
 > ```
 > GET /deviceManagement/configurationSettings
 > GET /deviceManagement/configurationCategories
 > ```
 
+Settings Catalog policies use several different `@odata.type` values to represent different kinds of settings. Basetune handles all of them during the flattening step. Each `settingInstance` is recursively walked and flattened into a canonical `SettingObject` with a `DefinitionId`, `RawValue`, and optional `ParentDefinitionId`. Once both source and target policies are flattened, Basetune compares them by `DefinitionId`. Each setting is assigned one of four statuses. 
+
+Finally, raw values and definition IDs are resolved to friendly display names using the locally cached definitions before the report is generated.
 
 ---
 
