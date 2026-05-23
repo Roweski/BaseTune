@@ -140,13 +140,13 @@ Once the download completes, the icon returns to its neutral state — definitio
 
 If you export a Settings Catalog policy using the Microsoft Graph API (via the `configurationPolicies` endpoint), you will notice that settings are represented as structured objects within a `settings` array. Each item in this array contains a `settingInstance` object that describes the actual setting.
 
+Basetune first retrieves all policies using a lightweight list call that selects only the metadata fields it needs (like id and name). If a **filter** is configured, only policies whose name matches the filter are passed to the next step. Basetune then **expands** the settings for each remaining policy individually — in parallel, with a configurable thread limit. This parallel approach significantly reduces total loading time when a tenant contains a large number of policies.
+
 > **Note:** The `settings` array is not returned by default. Basetune explicitly requests it by appending `$expand=settings` to the API call when loading policies:
 
 > ```
 > GET /deviceManagement/configurationPolicies/{id}?$expand=settings
 > ```
-
-To avoid fetching the full policy list and their expanded settings in a single blocking call, Basetune first retrieves all policies using a lightweight list call that selects only the metadata fields it needs. If a **filter** is configured, only policies whose name matches the filter are passed to the next step. Basetune then **expands** the settings for each remaining policy individually — in parallel, with a configurable thread limit. This parallel approach significantly reduces total loading time when a tenant contains a large number of policies.
 
 The `settingDefinitionId` is a technical identifier that corresponds to the human-readable friendly name shown in the Intune UI. Instead of fetching the `$expand=settings,settingDefinitions` values per policy, Basetune downloads all setting definitions in a single call to a JSON file. These are reused for all subsequent comparisons to minimize API overhead and enable **offline** comparisons without requiring an active connection.
 
