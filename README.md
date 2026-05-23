@@ -315,7 +315,7 @@ Offline mode accepts Intune Settings Catalog and Security Baseline JSON files ex
 
 | Source | How to export |
 |---|---|
-| **Basetune CLI** | Use `-Export <tenant id>` |
+| **Basetune CLI** | Use `-ExportId <tenant id>` |
 | **Basetune UI** | Click the export button. |
 | **Intune portal** | Devices → Configuration → select policy → Export JSON |
 | **[Open Intune Baseline](https://github.com/SkipToTheEndpoint/OpenIntuneBaseline)** | Download JSON files from GitHub |
