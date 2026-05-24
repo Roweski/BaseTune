@@ -10,7 +10,7 @@
 
 ## Requirements
 
-- Powershell 7+
+- PowerShell 7+
 - A Microsoft Entra App Registration with the **DeviceManagementConfiguration.Read.All** Application permission for Microsoft Graph API.
 - A directory of exported policy files in JSON format. Each file is expected to contain the following fields: id, name, and a settings array.
 
@@ -42,7 +42,7 @@
 
 ## What it does
 
-Basetune is a Powershell-based tool to compare **Intune Settings Catalog** and **Security Baseline** policies across tenants or exported baselines.  Policies can be loaded online through the Microsoft Graph API or offline from exported JSON files — whichever fits your workflow.
+Basetune is a PowerShell-based tool to compare **Intune Settings Catalog** and **Security Baseline** policies across tenants or exported baselines.  Policies can be loaded online through the Microsoft Graph API or offline from exported JSON files — whichever fits your workflow.
 
 Comparison capabilities:
 - **Source vs. Target** — Each run compares one source against one target. Source and target can be any combination of online tenants and offline baselines.
