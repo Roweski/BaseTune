@@ -370,7 +370,7 @@ Policies that contain a list of values (such as file extensions, keywords, or pa
 
 ## Error Handling, Throttling & Retries
 
-The module features a robust, built-in error handling mechanism within `Invoke-IntuneGraphRequest` to ensure resilience during bulk operations and high-concurrency workloads.
+The module features a robust, built-in error handling mechanism to ensure resilience during bulk operations and high-concurrency workloads.
 
 ### Resilience Framework
 When making Graph API requests, the module automatically categorizes and reacts to different response behaviors:
