@@ -116,7 +116,7 @@ Run the CLI with `-Download -Id <tenant id>`. The Id represents the unique key i
 .\BasetuneCLI.ps1 -Download -Id 1
 ```
 
-Run the UI. When no setting definitions are available, the Download icon in the status bar is highlighted in blue — click it to start.
+Run the UI. When setting definitions are not yet available, the Download icon in the status bar is highlighted in blue — click it to start.
 
 <a href="docs/controls.png" target="_blank">
   <img src="docs/controls.png" alt="Status bar with the Download icon highlighted" width="100">
