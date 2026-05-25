@@ -89,7 +89,7 @@ Each tenant entry requires:
 | Field | Description |
 |---|---|
 | `displayName` | Friendly name shown in dropdowns |
-| `authMethod` | `ClientSecret`, `Certificate`, or `None` (offline JSON only) |
+| `authMethod` | `ClientSecret`, `Certificate`, or `None` |
 | `tenantId` | Entra tenant ID |
 | `clientId` | App registration client ID |
 | `clientSecret` | Client secret (when authMethod = ClientSecret) |
