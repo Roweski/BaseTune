@@ -146,6 +146,8 @@ Basetune first retrieves all policies using a lightweight list call that selects
 > GET /deviceManagement/configurationPolicies/{id}?$expand=settings
 > ```
 
+Once the policies and their settings are successfully retrieved, Basetune caches this data locally to prevent redundant API calls when comparing the selected policies.
+
 The `settingDefinitionId` is a technical identifier that corresponds to the human-readable friendly name shown in the Intune UI. Instead of fetching the `$expand=settings,settingDefinitions` values per policy, Basetune downloads all setting definitions in a single call to a JSON file. These are reused for all subsequent comparisons to minimize API overhead and enable **offline** comparisons without requiring an active connection.
 
 > ```
