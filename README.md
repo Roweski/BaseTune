@@ -92,7 +92,7 @@ Each tenant entry requires:
 | `authMethod` | `ClientSecret`, `Certificate`, or `None` (offline JSON only) |
 | `tenantId` | Entra tenant ID |
 | `clientId` | App registration client ID |
-| `clientSecret` | Client secret (when authMethod = ClientSecret). Stored encrypted with DPAPI |
+| `clientSecret` | Client secret (when authMethod = ClientSecret) |
 | `certThumbprint` | Certificate thumbprint (when authMethod = Certificate) |
 | `path` | Local folder for JSON files (when authMethod = None) |
  
