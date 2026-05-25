@@ -140,20 +140,11 @@ If you export a Settings Catalog policy using the Microsoft Graph API (via the `
 
 Basetune first retrieves all policies using a lightweight list call that selects only the metadata fields it needs (like id and name). If a **filter** is configured, only policies whose name matches the filter are passed to the next step. Basetune then **expands** the settings for each remaining policy individually — in parallel, with a configurable thread limit. This parallel approach significantly reduces total loading time when a tenant contains a large number of policies.
 
-> **Note:** The `settings` array is not returned by default. Basetune explicitly requests it by appending `$expand=settings` to the API call when loading policies:
-
-> ```
-> GET /deviceManagement/configurationPolicies/{id}?$expand=settings
-> ```
+> **Note:** The `settings` array is not returned by default. Basetune explicitly requests it by appending `$expand=settings` to the API call when loading policies.
 
 Once the policies and their settings are successfully retrieved, Basetune caches this data locally to prevent redundant API calls when comparing the selected policies.
 
-The `settingDefinitionId` is a technical identifier that corresponds to the human-readable friendly name shown in the Intune UI. Instead of fetching the `$expand=settings,settingDefinitions` values per policy, Basetune downloads all setting definitions in a single call to a JSON file. These are reused for all subsequent comparisons to minimize API overhead and enable **offline** comparisons without requiring an active connection.
-
-> ```
-> GET /deviceManagement/configurationSettings
-> GET /deviceManagement/configurationCategories
-> ```
+The `settingDefinitionId` is a technical identifier that corresponds to a human-readable friendly name shown in the Intune UI. Instead of fetching the values per policy using `$expand=settingDefinitions`, Basetune downloads all setting definitions in a single call to a JSON file. These are reused for all subsequent comparisons to minimize API overhead and enable **offline** comparisons without requiring an active connection.
 
 Settings Catalog policies use several different `@odata.type` values to represent different kinds of settings. Basetune handles all of them during the flattening step. Each `settingInstance` is recursively walked and flattened into a canonical `SettingObject` with a `DefinitionId`, `RawValue`, and optional `ParentDefinitionId`. Once both source and target policies are flattened, Basetune compares them by `DefinitionId`. Each setting is assigned one of four statuses. 
 
