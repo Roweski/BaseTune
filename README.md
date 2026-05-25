@@ -1,6 +1,6 @@
 # Basetune
 
-> Compare Intune Settings Catalog policies across tenants and baselines — securely, offline-capable, and fully under your control
+> Compare Intune policies across tenants and baselines — securely, offline-capable, and fully under your control
 
 ![PowerShell](https://img.shields.io/badge/PowerShell-7%2B-blue?logo=powershell)
 ![License](https://img.shields.io/badge/license-MIT-green)
