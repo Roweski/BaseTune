@@ -158,6 +158,24 @@ $global:btnOpenOptions       = Find 'btnOpenOptions'
 $global:progressBar          = Find 'progressBar'
 $global:txtLog               = Find 'txtLog'
 
+# Disable undo on the log TextBox. WPF TextBox keeps an undo stack of every
+# AppendText() — for a log that streams thousands of lines per compare, this
+# silently eats 50-200 MB of UI process memory that the trim-to-10k-lines logic
+# can't touch. Logs are append-only output, not editable text, so undo has no
+# value here. Must be set BEFORE any text is appended.
+$global:txtLog.IsUndoEnabled = $false
+
+# Tell .NET to compact the Large Object Heap when GC.Collect() runs. JSON
+# parsing of settingDefinitions.json produces strings >85KB which land on the
+# LOH — and the LOH is never compacted by default, only swept. After several
+# compares the LOH fragments and the working set climbs even though the live
+# object graph is small. One-time setting; honoured by every subsequent
+# [GC]::Collect() call in Start-Runspace.
+try {
+    [System.Runtime.GCSettings]::LargeObjectHeapCompactionMode = `
+        [System.Runtime.GCLargeObjectHeapCompactionMode]::CompactOnce
+} catch {}
+
 # Limit scroll speed on the log box — default WPF pixel-scroll is too fast
 Set-SlowScroll -Element $global:txtLog
 
@@ -213,6 +231,31 @@ public class PolicyItem : INotifyPropertyChanged {
     public event PropertyChangedEventHandler PropertyChanged;
     protected void OnPropertyChanged(string n) {
         if (PropertyChanged != null) PropertyChanged(this, new PropertyChangedEventArgs(n));
+    }
+}
+"@
+}
+
+# ── Win32 trim-working-set helper ─────────────────────────────────────────────
+# After a forced GC the managed heap is clean, but Windows holds onto the
+# previously-used pages as part of the process working set. They count toward
+# what Task Manager shows as "Memory" even though .NET no longer needs them.
+# SetProcessWorkingSetSize(-1, -1) tells the OS to trim the working set down
+# to what's actually live. Real address space stays mapped (so subsequent
+# allocations don't pay a page-fault price for genuinely-needed memory), but
+# the visible footprint drops immediately instead of waiting minutes for the
+# OS to notice on its own.
+if (-not ("MemTrim" -as [type])) {
+    Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class MemTrim {
+    [DllImport("kernel32.dll")]
+    public static extern bool SetProcessWorkingSetSize(IntPtr proc, IntPtr min, IntPtr max);
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetCurrentProcess();
+    public static void Trim() {
+        SetProcessWorkingSetSize(GetCurrentProcess(), (IntPtr)(-1), (IntPtr)(-1));
     }
 }
 "@
@@ -376,7 +419,61 @@ function Start-Runspace {
             # is a safety net for the case where OnDone throws before
             # reaching its Set-Busy call — without it the UI would stay
             # locked in busy state forever.
-            try { & $job.OnDone } finally { $global:CurrentJob = $null }
+            #
+            # After OnDone: actively NULL all heavy references on $job so
+            # the timer-closure (which captured $job via $global:CurrentJob)
+            # no longer keeps PS pipeline output / queue / runspace alive
+            # until the next GC. Then force a collect — the runspace just
+            # produced potentially MB of compare data, and WPF won't trigger
+            # gen2 GC on its own between user clicks.
+            $jobType = $job.Type
+            try { & $job.OnDone } finally {
+                $job.PS       = $null
+                $job.Runspace = $null
+                $job.Handle   = $null
+                $job.Queue    = $null
+                $job.Output   = $null
+                $job.Timer    = $null
+                $job.OnDone   = $null
+                $job          = $null
+                $global:CurrentJob = $null
+
+                # Compare/Load produce the largest transient allocations
+                # (flat setting arrays, resolved diffs, HTML strings).
+                # Force a full collect only for those — Export/Download
+                # are cheap and don't warrant the ~50-200ms pause.
+                if ($jobType -in @('Compare','Load')) {
+                    $Error.Clear()
+                    # Also clear the StringBuilder local — it just held the
+                    # final log drain (potentially MB of text). Without this
+                    # it stays alive until the Tick handler scope unwinds,
+                    # which is after the GC.Collect below.
+                    $sb = $null
+                    # Re-arm LOH compaction — the mode resets to Default after
+                    # each collect, so we set it fresh here. JSON-derived
+                    # strings >85KB live on the LOH; without this they leave
+                    # permanent holes that inflate the working set.
+                    try {
+                        [System.Runtime.GCSettings]::LargeObjectHeapCompactionMode = `
+                            [System.Runtime.GCLargeObjectHeapCompactionMode]::CompactOnce
+                    } catch {}
+                    # Explicit gen2 + LOH collect. The default [GC]::Collect()
+                    # is generation 0/1 only — useless here, since the big
+                    # compare-time allocations (settingDefinitions strings,
+                    # resolved diff arrays, HTML payload) get promoted straight
+                    # to gen2 / LOH due to their size. Forced + blocking +
+                    # compacting is what actually returns memory.
+                    [GC]::Collect(2, [System.GCCollectionMode]::Forced, $true, $true)
+                    [GC]::WaitForPendingFinalizers()
+                    [GC]::Collect(2, [System.GCCollectionMode]::Forced, $true, $true)
+                    # Tell Windows to trim the working set now — otherwise the
+                    # pages freed by the GC stay attributed to this process
+                    # until the OS happens to need them elsewhere. Cosmetic
+                    # for the user (Task Manager looks sane), zero functional
+                    # cost (truly-needed pages just fault back in on access).
+                    try { [MemTrim]::Trim() } catch {}
+                }
+            }
         }
     })
     $global:CurrentJob.Timer = $timer
@@ -393,6 +490,15 @@ function Stop-ActiveRunspace {
         if ($job.PS)       { try { $job.PS.Stop() }      catch {} }
         if ($job.PS)       { try { $job.PS.Dispose() }   catch {} }
         if ($job.Runspace) { try { $job.Runspace.Dispose() } catch {} }
+        # Match the Tick-handler cleanup: actively release heavy refs so
+        # the cancelled job doesn't linger via the timer closure.
+        $job.PS       = $null
+        $job.Runspace = $null
+        $job.Handle   = $null
+        $job.Queue    = $null
+        $job.Output   = $null
+        $job.Timer    = $null
+        $job.OnDone   = $null
     }
 
     # Set-Busy $false nulls $global:CurrentJob (the busy/idle source of truth)
@@ -821,12 +927,49 @@ $global:btnCompare.Add_Click({
                     Out-File $global:CategoriesFilePath -Encoding UTF8
             } catch {}
         }
+
+        # Emit cache contents back to the UI so the next compare doesn't
+        # need to re-parse settingDefinitions.json. Wrapped in a marker
+        # object so the UI's OnDone can pick it out of the pipeline output.
+        # This runs in the runspace, so the UI thread never blocks on JSON
+        # parsing — the parse already happened above (regel ~830) or was
+        # skipped because $S.cachedHasDefs was already true.
+        [PSCustomObject]@{
+            __type    = 'cache'
+            defLookup = if ($hasDefs) { $defLookup } else { $null }
+            catMap    = if ($hasCats) { $catMap    } else { $null }
+            hasDefs   = $hasDefs
+            hasCats   = $hasCats
+        }
     }
 
     Start-Runspace -Work $work -Shared $shared -OnDone {
+        # Snapshot the job locally before Set-Busy nulls $global:CurrentJob.
+        $job = $global:CurrentJob
         Set-Busy $false
         Update-Counts
-        Update-DefinitionCache -JsonDefsPath $global:definitionsPath
+
+        # Pick up the cache emitted by the runspace at its final step. This
+        # is far cheaper than re-running Update-DefinitionCache here: the
+        # JSON file was already parsed in the runspace (or wasn't needed
+        # because the UI cache was already populated). Just rehome the
+        # references. Zero UI-thread blocking — these are hashtables, not
+        # disk reads.
+        $cacheOut = @($job.Output) | Where-Object { $_.__type -eq 'cache' } | Select-Object -First 1
+        if ($cacheOut) {
+            $defCache = $global:Cache.Definitions
+            if ($cacheOut.hasDefs -and -not $defCache.HasDefs) {
+                $defCache.Lookup  = $cacheOut.defLookup
+                $defCache.HasDefs = $true
+                Write-UILog "[OK][Definitions] $($cacheOut.defLookup.Count) definitions cached"
+            }
+            if ($cacheOut.hasCats -and -not $defCache.HasCats) {
+                $defCache.CategoryById = $cacheOut.catMap
+                $defCache.HasCats      = $true
+                Write-UILog "[OK][Categories] $($cacheOut.catMap.Count) categories cached"
+            }
+        }
+
         if (Test-Path $global:reportPath) {
             $global:btnOpenReport.IsEnabled = $true
             Write-UILog "`nReport ready."

@@ -593,6 +593,7 @@ function Update-DefinitionCache {
 
     if (($Force -or -not $defCache.HasDefs) -and (Test-Path $defsFile)) {
         try {
+            Write-UILog "[INFO][Definitions] Loading setting definitions..."
             $defs   = Get-Content $defsFile -Raw | ConvertFrom-Json
             $lookup = @{}
             foreach ($d in $defs) {
@@ -606,6 +607,7 @@ function Update-DefinitionCache {
 
     if (($Force -or -not $defCache.HasCats) -and (Test-Path $catsFile)) {
         try {
+            Write-UILog "[INFO][Categories] Loading setting categories..."
             $cats   = Get-Content $catsFile -Raw -Encoding UTF8 | ConvertFrom-Json
             $catMap = @{}
             foreach ($c in $cats) { $catMap[$c.id] = $c }
